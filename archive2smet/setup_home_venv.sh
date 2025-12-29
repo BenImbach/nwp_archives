@@ -95,8 +95,9 @@ echo ""
 # Required packages for archive2smet.py:
 # - xarray: for working with GRIB/netCDF data
 # - cfgrib: GRIB file backend for xarray (requires eccodes module)
+# - geopandas: for reading GeoJSON station files
 # 
-# Note: pandas, scipy are provided by scipy-stack module and
+# Note: pandas, scipy, numpy are provided by scipy-stack module and
 #       don't need to be installed in the venv (but will be available)
 echo "Step 6: Installing required packages from Alliance Canada wheels..."
 echo "  Checking available wheels..."
@@ -104,13 +105,13 @@ echo "  Checking available wheels..."
 # Check if packages are available (optional but helpful)
 if command -v avail_wheels &> /dev/null; then
     echo "  Available wheels:"
-    avail_wheels xarray cfgrib 2>/dev/null || echo "    (avail_wheels not available, continuing anyway)"
+    avail_wheels xarray cfgrib geopandas 2>/dev/null || echo "    (avail_wheels not available, continuing anyway)"
     echo ""
 fi
 
 # Install packages together to help pip resolve dependencies
-echo "  Installing: xarray cfgrib"
-pip install --no-index xarray cfgrib
+echo "  Installing: xarray cfgrib geopandas"
+pip install --no-index xarray cfgrib geopandas
 
 echo "  ✓ Packages installed"
 echo ""
@@ -122,6 +123,9 @@ python -c "import pandas as pd; print(f'  ✓ pandas {pd.__version__} (from scip
 python -c "import scipy; print(f'  ✓ scipy {scipy.__version__} (from scipy-stack)')" || echo "  ✗ scipy import failed"
 python -c "import xarray as xr; print(f'  ✓ xarray {xr.__version__}')" || echo "  ✗ xarray import failed"
 python -c "import cfgrib; print(f'  ✓ cfgrib {cfgrib.__version__}')" || echo "  ✗ cfgrib import failed"
+python -c "import geopandas as gpd; print(f'  ✓ geopandas {gpd.__version__}')" || echo "  ✗ geopandas import failed"
+# Check if eccodes Python package is available (provided by eccodes module)
+python -c "import eccodes; print(f'  ✓ eccodes Python bindings available')" 2>/dev/null || echo "  ⚠ eccodes Python package not available (cfgrib uses eccodes library from module)"
 
 echo ""
 echo "========================================="
