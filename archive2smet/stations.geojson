@@ -1,0 +1,50 @@
+{
+    "type": "FeatureCollection",
+    "crs": {
+        "type": "name",
+        "properties": {
+            "name": "urn:ogc:def:crs:EPSG::4326"
+        }
+    },
+    "features": [
+        {
+            "type": "Feature",
+            "properties": {
+                "station_id": "RENDEZVOUS"
+            },
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
+                    -122.901022,
+                    50.095670
+                ]
+            }
+        },
+        {
+            "type": "Feature",
+            "properties": {
+                "station_id": "FIDELITY"
+            },
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
+                    -117.700966,
+                    51.234383
+                ]
+            }
+        },
+        {
+            "type": "Feature",
+            "properties": {
+                "station_id": "BOW_SUMMIT"
+            },
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
+                    -116.479040,
+                    51.709373
+                ]
+            }
+        }
+    ]
+}
