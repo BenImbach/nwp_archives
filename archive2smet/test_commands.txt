@@ -10,6 +10,7 @@ module purge
 module load python
 module load scipy-stack
 module load eccodes
+module load proj
 
 # 2. Activate virtual environment
 source $HOME/python/archive2smet/bin/activate
@@ -29,7 +30,10 @@ python -c "import xarray as xr; print('✓ xarray', xr.__version__)"
 # 7. Test cfgrib import
 python -c "import cfgrib; print('✓ cfgrib', cfgrib.__version__)"
 
-# 8. Test reading a GRIB file (replace path with your actual GRIB file)
+# 8. Test geopandas import
+python -c "import geopandas as gpd; print('✓ geopandas', gpd.__version__)"
+
+# 9. Test reading a GRIB file (replace path with your actual GRIB file)
 python -c "import xarray as xr; ds = xr.open_dataset('/project/6005576/data/nwp/hrdps/2023/HRDPS_20230101.grib2', engine='cfgrib', backend_kwargs={'time_dims': ('valid_time',), 'encode_cf': ('time', 'geography', 'vertical'), 'filter_by_keys': {'typeOfLevel': 'surface'}, 'decode_timedelta': True}); print('✓ GRIB file opened successfully'); print('Variables:', list(ds.data_vars)); print('Dimensions:', dict(ds.sizes))"
 
 # OPTION 2: Test without venv (just modules, may have compatibility issues)

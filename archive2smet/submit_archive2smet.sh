@@ -14,11 +14,7 @@ SEASON=$1
 GEOJSON_FILE=$2
 ACCOUNT=${3:-def-phaegeli}
 
-# Script directory (where scripts are located)
-# Scripts are always in $HOME/scratch/archive2smet
 SCRIPT_DIR=$HOME/scratch/archive2smet
-
-# Set output directory (in same folder as scripts, in output subdirectory)
 OUTPUT_DIR=${OUTPUT_DIR:-${SCRIPT_DIR}/output/${SEASON}}
 GRIB_DIR=${GRIB_DIR:-/project/6005576/data/nwp/hrdps/${SEASON}}
 
@@ -28,9 +24,7 @@ export GEOJSON_FILE=$GEOJSON_FILE
 export GRIB_DIR=$GRIB_DIR
 export OUTPUT_DIR=$OUTPUT_DIR
 
-# Calculate total chunks dynamically based on season dates
-# Season: Sept 1 (prev year) to May 31 (season year) with 7 days per chunk
-# Use Python to calculate the same way archive2smet.py does it
+# Calculate total chunks (Sept 1 prev year to May 31 season year, 7 days per chunk)
 TOTAL_CHUNKS=$(python3 -c "
 from datetime import datetime
 season = $SEASON
@@ -45,7 +39,6 @@ print(total_chunks)
 echo "Archive2SMET Pipeline: Season $SEASON, $TOTAL_CHUNKS chunks"
 echo ""
 
-# Create directories (logs and output are separate)
 mkdir -p ${SCRIPT_DIR}/logs
 mkdir -p ${OUTPUT_DIR}
 
@@ -71,11 +64,9 @@ fi
 echo "Extraction job ID: $EXTRACT_JOB"
 echo ""
 
-# Submit concatenation job (runs automatically after all extract jobs complete)
+# Submit concatenation job (runs after all extract jobs complete)
 echo "Submitting concatenation job (runs after all extract jobs complete)..."
-# Wait a moment for job to be fully registered
 sleep 1
-# For array jobs, afterok waits for ALL array tasks to complete
 CONCAT_JOB_OUTPUT=$(sbatch \
     --account=$ACCOUNT \
     --dependency=afterok:${EXTRACT_JOB} \

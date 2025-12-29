@@ -8,8 +8,6 @@ SEASON=${SEASON:-2023}
 GEOJSON_FILE=${GEOJSON_FILE:-/path/to/stations.geojson}
 GRIB_DIR=${GRIB_DIR:-/project/6005576/data/nwp/hrdps/${SEASON}}
 
-# Script directory (where this script and archive2smet.py are located)
-# Scripts are always in $HOME/scratch/archive2smet
 SCRIPT_DIR=$HOME/scratch/archive2smet
 
 # Change to script directory to ensure relative paths work
@@ -19,25 +17,16 @@ cd "${SCRIPT_DIR}" || {
     exit 1
 }
 
-# Output directory (in same folder as scripts, in output subdirectory)
 OUTPUT_DIR=${OUTPUT_DIR:-${SCRIPT_DIR}/output/${SEASON}}
 
-# Create directories (logs and output are separate)
-# Note: Logs directory should already exist (created by submit script)
-# but create it here as well just in case
 mkdir -p ${SCRIPT_DIR}/logs
 mkdir -p ${OUTPUT_DIR}
 
-# Load modules (use default versions)
-# Following: https://docs.alliancecan.ca/wiki/Python
+# Load modules
 module purge
-module load python
-module load scipy-stack
-module load eccodes
+module load python scipy-stack eccodes proj
 
-# Activate virtual environment (created by setup_home_venv.sh)
-# Virtual environment location in HOME directory as recommended by Alliance Canada
-# See: https://docs.alliancecan.ca/wiki/Python
+# Activate virtual environment
 VENV_DIR=$HOME/python/archive2smet
 
 if [ ! -d "$VENV_DIR" ]; then
