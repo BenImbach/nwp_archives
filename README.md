@@ -15,7 +15,7 @@ cd ~/scratch/archive2smet
 ./setup_home_venv.sh
 
 # Run pipeline
-./submit_archive2smet.sh 2023 /path/to/stations.geojson def-phaegeli
+./submit.sh 2023 /path/to/stations.geojson def-phaegeli 16
 ```
 
 ## Input
@@ -40,13 +40,19 @@ cd ~/scratch/archive2smet
 
 ## Pipeline
 
-**Two phases** (automatically chained):
-1. **Extract**: Parallel array jobs process time chunks (~7 days each)
-2. **Concat**: Single job merges chunks into final station files
+**Single job** processes entire season:
+- Extracts all GRIB files in parallel using multiprocessing
+- Writes final SMET files directly (no intermediate chunks)
+- Uses configurable number of CPUs (default: 16)
 
-**Time limits**: Extract jobs (3h), Concat job (1h)
+**Time limit**: 12 hours (adjustable in `submit.sh`)
 
 ## Configuration
+
+**Command line arguments:**
+```bash
+./submit.sh <season> <geojson_file> [account] [cpus]
+```
 
 **Environment variables** (optional, defaults shown):
 ```bash
@@ -61,10 +67,9 @@ export OUTPUT_DIR=~/scratch/archive2smet/output/${SEASON}
 ## Monitoring
 
 ```bash
-squeue -u $USER                                                    # Job status
-tail -f ~/scratch/archive2smet/logs/${SEASON}/*.out                # SLURM job logs (stdout/stderr)
-tail -f ~/scratch/archive2smet/logs/${SEASON}/chunk_*.log          # Application logs (extract phase)
-tail -f ~/scratch/archive2smet/logs/${SEASON}/concatenate.log      # Application logs (concat phase)
+squeue -u $USER                                    # Job status
+tail -f ~/scratch/archive2smet/logs/${SEASON}/*.out    # SLURM job logs (stdout/stderr)
+tail -f ~/scratch/archive2smet/logs/${SEASON}/process.log  # Application log
 ```
 
 ## Requirements
@@ -88,3 +93,4 @@ tail -f ~/scratch/archive2smet/logs/${SEASON}/concatenate.log      # Application
 - Raw HRDPS values (no lapse rate corrections)
 - Nearest-neighbor grid lookup
 - Missing dates filled with -999
+- Parallel processing uses multiprocessing to process multiple GRIB files simultaneously
