@@ -61,8 +61,10 @@ export OUTPUT_DIR=~/scratch/archive2smet/output/${SEASON}
 ## Monitoring
 
 ```bash
-squeue -u $USER                          # Job status
-tail -f ~/scratch/archive2smet/logs/*.out  # Logs
+squeue -u $USER                                                    # Job status
+tail -f ~/scratch/archive2smet/logs/${SEASON}/*.out                # SLURM job logs (stdout/stderr)
+tail -f ~/scratch/archive2smet/logs/${SEASON}/chunk_*.log          # Application logs (extract phase)
+tail -f ~/scratch/archive2smet/logs/${SEASON}/concatenate.log      # Application logs (concat phase)
 ```
 
 ## Requirements

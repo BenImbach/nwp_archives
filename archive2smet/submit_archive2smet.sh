@@ -39,7 +39,7 @@ print(total_chunks)
 echo "Archive2SMET Pipeline: Season $SEASON, $TOTAL_CHUNKS chunks"
 echo ""
 
-mkdir -p ${SCRIPT_DIR}/logs
+mkdir -p ${SCRIPT_DIR}/logs/${SEASON}
 mkdir -p ${OUTPUT_DIR}
 
 # Submit extraction array job
@@ -50,8 +50,8 @@ EXTRACT_JOB_OUTPUT=$(sbatch \
     --time=3:00:00 \
     --mem=8G \
     --cpus-per-task=4 \
-    --output=${SCRIPT_DIR}/logs/%j_%a.out \
-    --error=${SCRIPT_DIR}/logs/%j_%a.err \
+    --output=${SCRIPT_DIR}/logs/${SEASON}/%j_%a.out \
+    --error=${SCRIPT_DIR}/logs/${SEASON}/%j_%a.err \
     --export=ALL \
     ${SCRIPT_DIR}/archive2smet.sh extract)
 EXTRACT_JOB=$(echo "$EXTRACT_JOB_OUTPUT" | grep -oP 'Submitted batch job \K\d+')
@@ -73,8 +73,8 @@ CONCAT_JOB_OUTPUT=$(sbatch \
     --time=1:00:00 \
     --mem=4G \
     --cpus-per-task=1 \
-    --output=${SCRIPT_DIR}/logs/%j.out \
-    --error=${SCRIPT_DIR}/logs/%j.err \
+    --output=${SCRIPT_DIR}/logs/${SEASON}/%j.out \
+    --error=${SCRIPT_DIR}/logs/${SEASON}/%j.err \
     --export=ALL \
     ${SCRIPT_DIR}/archive2smet.sh concat 2>&1)
 CONCAT_JOB=$(echo "$CONCAT_JOB_OUTPUT" | grep -oP 'Submitted batch job \K\d+')
@@ -89,6 +89,6 @@ echo "Concatenation job ID: $CONCAT_JOB"
 echo ""
 echo "Jobs submitted: Extract=$EXTRACT_JOB (array), Concat=$CONCAT_JOB (auto-runs after extract)"
 echo "Monitor: squeue -u $USER"
-echo "Logs: ${SCRIPT_DIR}/logs/"
+echo "Logs: ${SCRIPT_DIR}/logs/${SEASON}/"
 echo "Output: ${OUTPUT_DIR}/"
 

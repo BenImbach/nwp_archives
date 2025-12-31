@@ -470,12 +470,15 @@ if __name__ == "__main__":
             parser.error("extract mode requires --chunk-id and --grib-dir")
     
     if not args.log_file:
-        log_dir = Path(args.output_dir) / "logs"
-        log_dir.mkdir(parents=True, exist_ok=True)
+        # Default to separate logs directory (not in output_dir), organized by season
+        # Shell scripts should pass --log-file explicitly
+        log_base = Path(os.environ.get('ARCHIVE2SMET_LOG_DIR', 
+                                        Path.home() / 'scratch' / 'archive2smet' / 'logs' / str(args.season)))
+        log_base.mkdir(parents=True, exist_ok=True)
         if args.mode == 'extract':
-            args.log_file = log_dir / f"chunk_{args.chunk_id:03d}.log"
+            args.log_file = log_base / f"chunk_{args.chunk_id:03d}.log"
         else:
-            args.log_file = log_dir / "concatenate.log"
+            args.log_file = log_base / "concatenate.log"
     
     if args.mode == 'extract':
         process_chunk(args.season, args.chunk_id, args.geojson, args.grib_dir, args.output_dir, args.log_file)

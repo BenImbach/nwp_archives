@@ -19,7 +19,6 @@ cd "${SCRIPT_DIR}" || {
 
 OUTPUT_DIR=${OUTPUT_DIR:-${SCRIPT_DIR}/output/${SEASON}}
 
-mkdir -p ${SCRIPT_DIR}/logs
 mkdir -p ${OUTPUT_DIR}
 
 # Load modules
@@ -37,13 +36,21 @@ fi
 
 source $VENV_DIR/bin/activate
 
+# Set log file location (separate from output, organized by season)
+LOG_DIR=${SCRIPT_DIR}/logs/${SEASON}
+mkdir -p ${LOG_DIR}
+
 if [ "$MODE" == "extract" ]; then
     [ -z "$SLURM_ARRAY_TASK_ID" ] && echo "Error: SLURM_ARRAY_TASK_ID not set" && exit 1
+    # Format chunk ID with zero padding
+    CHUNK_ID_FORMATTED=$(printf "%03d" ${SLURM_ARRAY_TASK_ID})
     python archive2smet.py extract --season $SEASON --chunk-id ${SLURM_ARRAY_TASK_ID} \
-        --geojson $GEOJSON_FILE --grib-dir $GRIB_DIR --output-dir $OUTPUT_DIR
+        --geojson $GEOJSON_FILE --grib-dir $GRIB_DIR --output-dir $OUTPUT_DIR \
+        --log-file ${LOG_DIR}/chunk_${CHUNK_ID_FORMATTED}.log
 elif [ "$MODE" == "concat" ]; then
     python archive2smet.py concat --season $SEASON --geojson $GEOJSON_FILE \
-        --chunk-dir $OUTPUT_DIR/chunks --output-dir $OUTPUT_DIR
+        --chunk-dir $OUTPUT_DIR/chunks --output-dir $OUTPUT_DIR \
+        --log-file ${LOG_DIR}/concatenate.log
 else
     echo "Error: MODE must be 'extract' or 'concat'" && exit 1
 fi
