@@ -15,7 +15,7 @@ cd ~/scratch/archive2smet
 ./setup_home_venv.sh
 
 # Run pipeline
-./submit.sh 2023 /path/to/stations.geojson def-phaegeli 16
+./submit.sh 2025 stations.geojson def-phaegeli 16
 ```
 
 ## Input
