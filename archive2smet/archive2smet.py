@@ -240,12 +240,10 @@ def extract_grib_file(grib_file, stations, point_id_col="station_id"):
 def format_for_smet(df):
     """Format data for SMET output"""
     df = df.copy()
-    for col in ['DW', 'ILWR', 'ISWR', 'RH']:
+    # Round all data variables to 2 decimal places
+    for col in REQUIRED_SMET_COLS:
         if col in df.columns:
-            df[col] = np.floor(pd.to_numeric(df[col], errors='coerce')).astype('Int64')
-    for col in ['PSUM', 'TA', 'VW']:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors='coerce').round(2 if col == 'PSUM' else 1)
+            df[col] = pd.to_numeric(df[col], errors='coerce').round(2)
     return df.fillna(MISSING_VALUE)
 
 
@@ -253,11 +251,10 @@ def _format_smet_value(val, col):
     """Format a single value for SMET output"""
     if pd.isna(val) or val == MISSING_VALUE:
         return str(MISSING_VALUE)
-    if col == 'PSUM':
-        return '0' if val == 0 else f"{val:.2f}".rstrip('0').rstrip('.')
-    if col in ['TA', 'VW']:
-        return f"{val:.1f}"
-    return f"{int(val)}"
+    # All values rounded to 2 decimal places
+    if val == 0:
+        return '0'
+    return f"{val:.2f}".rstrip('0').rstrip('.')
 
 
 def write_smet_file(filepath, station_id, latitude, longitude, altitude, data):
@@ -266,9 +263,9 @@ def write_smet_file(filepath, station_id, latitude, longitude, altitude, data):
     with open(filepath, 'w') as f:
         f.write("SMET 1.1 ASCII\n[HEADER]\n")
         f.write(f"station_id       = {station_id}\n")
-        f.write(f"latitude         = {latitude:.6g}\n")
-        f.write(f"longitude        = {longitude:.6g}\n")
-        f.write(f"altitude         = {int(altitude)}\n")
+        f.write(f"latitude         = {latitude}\n")
+        f.write(f"longitude        = {longitude}\n")
+        f.write(f"altitude         = {round(altitude)}\n")
         f.write(f"nodata           = {MISSING_VALUE}\n")
         f.write(f"fields = timestamp {' '.join(REQUIRED_SMET_COLS)}\n[DATA]\n")
         
