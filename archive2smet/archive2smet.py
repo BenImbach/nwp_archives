@@ -4,6 +4,7 @@ Core functions for archive2smet pipeline
 """
 
 import os
+import sys
 import numpy as np
 import pandas as pd
 import xarray as xr
@@ -59,14 +60,14 @@ def ensure_station_id(stations):
     return stations
 
 
-def log_message(log_file, message, level="INFO"):
-    """Log message with timestamp"""
+def log_message(message, level="INFO"):
+    """Log message with timestamp (outputs to stdout/stderr, captured by SLURM)"""
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     log_entry = f"{timestamp} | {level} | {message}"
-    print(log_entry)
-    Path(log_file).parent.mkdir(parents=True, exist_ok=True)
-    with open(log_file, "a") as f:
-        f.write(log_entry + "\n")
+    if level == "ERROR":
+        print(log_entry, file=sys.stderr)
+    else:
+        print(log_entry)
 
 
 # ============================================================================
@@ -286,28 +287,28 @@ def write_smet_file(filepath, station_id, latitude, longitude, altitude, data):
 
 def _process_single_day(args):
     """Helper function for multiprocessing: extract one GRIB file"""
-    grib_file, stations, log_file = args
+    grib_file, stations = args
     try:
         result = extract_grib_file(grib_file, stations)
-        log_message(log_file, f"Processed {grib_file.name}")
+        log_message(f"Processed {Path(grib_file).name}")
         return result
     except Exception as e:
-        log_message(log_file, f"Error processing {grib_file.name}: {e}", "ERROR")
+        log_message(f"Error processing {Path(grib_file).name}: {e}", "ERROR")
         return None
 
 
-def process_season(season, geojson_file, grib_dir, output_dir, log_file, n_procs=None):
+def process_season(season, geojson_file, grib_dir, output_dir, n_procs=None):
     """Process entire season: extract all GRIB files and write final SMET files directly"""
     import geopandas as gpd
     
     start_time = datetime.now()
-    log_message(log_file, f"Starting season {season} processing")
+    log_message(f"Starting season {season} processing")
     
     start_date, end_date = get_season_dates(season)
-    log_message(log_file, f"Season {season}: {start_date.date()} to {end_date.date()}")
+    log_message(f"Season {season}: {start_date.date()} to {end_date.date()}")
     
     stations = ensure_station_id(gpd.read_file(geojson_file))
-    log_message(log_file, f"Loaded {len(stations)} stations")
+    log_message(f"Loaded {len(stations)} stations")
     
     elevations = extract_station_elevations(get_dem_file(season), stations)
     
@@ -319,32 +320,32 @@ def process_season(season, geojson_file, grib_dir, output_dir, log_file, n_procs
         if grib_file.exists():
             grib_files.append(grib_file)
         else:
-            log_message(log_file, f"Missing: {grib_file.name}", "WARNING")
+            log_message(f"Missing: {grib_file.name}", "WARNING")
     
     if not grib_files:
-        log_message(log_file, "No GRIB files found", "ERROR")
+        log_message("No GRIB files found", "ERROR")
         return
     
     # Process all days in parallel using multiprocessing
     if n_procs is None:
         n_procs = min(len(grib_files), int(os.environ.get('SLURM_CPUS_PER_TASK', cpu_count())))
     
-    log_message(log_file, f"Processing {len(grib_files)} days with {n_procs} processes")
+    log_message(f"Processing {len(grib_files)} days with {n_procs} processes")
     
     with Pool(processes=n_procs) as pool:
-        args_list = [(grib_file, stations, log_file) for grib_file in grib_files]
+        args_list = [(grib_file, stations) for grib_file in grib_files]
         results = pool.map(_process_single_day, args_list)
     
     all_data = [r for r in results if r is not None]
     
     if not all_data:
-        log_message(log_file, "No data extracted", "ERROR")
+        log_message("No data extracted", "ERROR")
         return
     
     # Combine all data
     combined = pd.concat(all_data, ignore_index=True)
     combined = combined.sort_values('timestamp').drop_duplicates(subset=['ID', 'timestamp'], keep='first')
-    log_message(log_file, f"Combined {len(combined)} rows from {len(all_data)} files")
+    log_message(f"Combined {len(combined)} rows from {len(all_data)} files")
     
     # Create complete hourly time series
     hourly_timestamps = pd.date_range(start_date, end_date + timedelta(days=1), freq='H', inclusive='left')
@@ -368,10 +369,10 @@ def process_season(season, geojson_file, grib_dir, output_dir, log_file, n_procs
             write_smet_file(output_dir_path / f"{station_id}.smet", station_id,
                            station_row.geometry.y, station_row.geometry.x,
                            elevations.get(station_id, 0), complete_df)
-            log_message(log_file, f"  Wrote {len(complete_df)} timesteps for {station_id}")
+            log_message(f"  Wrote {len(complete_df)} timesteps for {station_id}")
     
     duration = (datetime.now() - start_time).total_seconds() / 60
-    log_message(log_file, f"Season {season} complete ({duration:.1f} min)")
+    log_message(f"Season {season} complete ({duration:.1f} min)")
 
 
 if __name__ == "__main__":
@@ -382,18 +383,10 @@ if __name__ == "__main__":
     parser.add_argument('--geojson', type=str, required=True, help='Path to GeoJSON file with stations')
     parser.add_argument('--grib-dir', type=str, required=True, help='Directory containing HRDPS GRIB files')
     parser.add_argument('--output-dir', type=str, required=True, help='Output directory for SMET files')
-    parser.add_argument('--log-file', type=str, help='Log file path (default: logs/<season>/process.log)')
     
     args = parser.parse_args()
     
-    if not args.log_file:
-        # Default to separate logs directory (not in output_dir), organized by season
-        log_base = Path(os.environ.get('ARCHIVE2SMET_LOG_DIR', 
-                                        Path.home() / 'scratch' / 'archive2smet' / 'logs' / str(args.season)))
-        log_base.mkdir(parents=True, exist_ok=True)
-        args.log_file = log_base / "process.log"
-    
     # Use SLURM_CPUS_PER_TASK if available, otherwise auto-detect
     n_procs = int(os.environ.get('SLURM_CPUS_PER_TASK', cpu_count()))
-    process_season(args.season, args.geojson, args.grib_dir, args.output_dir, args.log_file, n_procs)
+    process_season(args.season, args.geojson, args.grib_dir, args.output_dir, n_procs)
 

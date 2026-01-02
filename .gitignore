@@ -1,31 +1,8 @@
 # Ignore all directories except archive2smet
-cedar/
-dems/
-read/
-wgrib/
-
-# Output directories
-output/
-logs/
-**/output/
-**/logs/
-
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-*.egg-info/
-dist/
-build/
-
-# Virtual environments (don't commit the venv itself)
-venv/
-env/
-.venv/
-**/venv/
-**/env/
+maintenance/cedar/
+maintenance/dems/
+maintenance/read/
+maintenance/wgrib/
 
 # IDE
 .vscode/
@@ -50,4 +27,3 @@ slurm-*.out
 
 # Google Docs (if synced)
 *.gdoc
-

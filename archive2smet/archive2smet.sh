@@ -6,7 +6,8 @@ SEASON=${SEASON:-2023}
 GEOJSON_FILE=${GEOJSON_FILE:-/path/to/stations.geojson}
 GRIB_DIR=${GRIB_DIR:-/project/6005576/data/nwp/hrdps/${SEASON}}
 
-SCRIPT_DIR=$HOME/scratch/archive2smet
+REPO_DIR=$HOME/scratch/nwp_archives
+SCRIPT_DIR=${REPO_DIR}/archive2smet
 
 # Change to script directory to ensure relative paths work
 cd "${SCRIPT_DIR}" || {
@@ -15,7 +16,7 @@ cd "${SCRIPT_DIR}" || {
     exit 1
 }
 
-OUTPUT_DIR=${OUTPUT_DIR:-${SCRIPT_DIR}/output/${SEASON}}
+OUTPUT_DIR=${OUTPUT_DIR:-${REPO_DIR}/output/${SEASON}}
 mkdir -p ${OUTPUT_DIR}
 
 # Load modules
@@ -33,11 +34,6 @@ fi
 
 source $VENV_DIR/bin/activate
 
-# Set log file location
-LOG_DIR=${SCRIPT_DIR}/logs/${SEASON}
-mkdir -p ${LOG_DIR}
-LOG_FILE=${LOG_DIR}/process.log
-
-# Run processing
+# Run processing (all output goes to SLURM log files)
 python archive2smet.py --season $SEASON --geojson $GEOJSON_FILE \
-    --grib-dir $GRIB_DIR --output-dir $OUTPUT_DIR --log-file $LOG_FILE
+    --grib-dir $GRIB_DIR --output-dir $OUTPUT_DIR
