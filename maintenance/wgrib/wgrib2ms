@@ -1,0 +1,161 @@
+#!/bin/sh
+#      9/2013 public domain  Wesley Ebisuzaki  
+#      1/2014  use -N for script generations
+# v1.0 2/2014  updated comments, symbolic variables for gmerge and wgrib2
+#         cleanup for public release
+# v1.1 6/2014: support for -i
+#
+#  2/2015 wgrib2ms: variant of wgrib2m, ignores any submessage structure.
+#              input file: ignore submessage structure
+#              output file: no submessages
+#              -new_grid is not supported
+#         wgrib2ms is faster than wgrib2m (few pipes, more equal payload)
+#
+# wgrib2ms is a sh script that runs N copies of wgrib2 for faster speed
+#   or writes a shell script which can run N copies of wgrib2
+#   Note: only a restricted set of output options are supported
+#
+# wgrib2ms  N (rest of command line)   .. runs script
+# wgrib2ms -N (rest of command line)   .. writes script
+#
+# Only a limited number of output options are supported
+#
+# -grib, -grib_out, -small_grib -ijsmall_grib
+#
+# checking for unsupported options is not comprehensive
+# wgrib2 and gmerge are assumed to be on your $PATH
+#
+# requires wgrib2, gmerge, seq (unix/linux command)
+#
+arg="$*"
+version="v1.1 6/2014 w.ebisuzaki"
+
+if [ $# -eq 0 ] ; then
+   echo "$0  $version"
+   echo "  $0 N (list)"
+   echo "  if N >  1, runs wgrib2 (list) in parallel (N streams)"
+   echo "  if N < -1, writes script for running wgrib2m -Nl(list)"
+   echo " wgrib2 output options supported: -new_grid, -grib, -grib_out, -small_grib -ijsmall_grib"
+   echo " wgrib2 and gmerge must be on your PATH."
+   echo " normally one copy of wgrib2 processes all the grib messages"
+   echo ' with "wgrib2ms N", N copies of wgrib2 are run, and each processes every',
+   echo ' Nth grib message.  Output grib messages are combined with gmerge.'
+
+   exit 8
+fi
+
+if [ "$1" -gt 1 ] ; then
+   export ncpu="$1"
+   export X=eval
+elif [ "$1" -lt -1 ] ; then
+   export ncpu=`expr 0 - $1`
+   export X=echo
+else
+   echo "$0 bad N"
+   exit 8
+fi
+
+shift
+
+
+newarg=""
+nout=0
+
+# gmerge=$HOME/bin/gmerge
+gmerge='gmerge'
+# wgrib2=$HOME/bin/wgrib2
+wgrib2='wgrib2'
+
+# set -x
+
+# echo..to capture script, eval..to run
+
+# prefix cannot contain equal sign
+prefix=/tmp/$$
+
+$X export OMP_NUM_THREADS=1
+
+# process wgrib2 options, change output files to pipe.$nout
+
+read_inv=0;
+stdin=$prefix.file.stdin
+
+while [ $# -ge 1 ]
+do
+   if [ "$1" = "-new_grid" ] ; then
+       echo "$0 doesn't support $1 option"
+       exit 8
+   fi
+   if [ "$1" = "-grib" -o "$1" = "-grib_out" ] ; then
+       nout=`expr $nout + 1`
+       newarg="$newarg \"$1\" _pipe.$nout"
+       eval outfile$nout=$2
+       if [ $# -lt 2 ] ; then
+           echo "help missing output file"
+           exit 8
+       fi
+       shift 2
+       continue
+   fi
+   if [ "$1" = "-small_grib" -o "$1" = "-ijsmall_grib" ] ; then
+       nout=`expr $nout + 1`
+       newarg="$newarg \"$1\" \"$2\" \"$3\" _pipe.$nout"
+       eval outfile$nout=$4
+       if [ $# -lt 4 ] ; then
+           echo "help missing output file"
+           exit 8
+       fi
+       shift 4
+       continue
+   fi
+   if [ "$1" = "-ave" -o "$1" = "-fcst_ave" -o "$1" = "-grib_ieee" ] ; then
+       echo "$0 doesn't support $1 option"
+       exit 8
+   fi
+   if [ "$1" = '-i' ] ; then
+       read_inv=1;
+       newarg="$newarg -i <$stdin "
+       shift 1
+       continue
+   fi
+   newarg="$newarg \"$1\""
+   shift 1
+
+done
+
+# finished parsing arguments
+
+# for every output file, need to make u/v in single field and gmerge all pipes
+
+rmlist=
+
+# make $stdin, if needed
+
+if [ $read_inv = 1 ] ; then
+   $X "cat >$stdin"
+   rmlist=$stdin
+fi
+
+# create pipes for converting U and V into 1 grib record
+# and for merging N streams
+
+for n in `seq 1 $nout` ; do
+   gmerge_pipes=
+   for i in `seq 1 $ncpu` ; do
+        p1=$prefix.pipe.$i.$n
+        $X "mkfifo $p1"
+        gmerge_pipes="$gmerge_pipes $p1"
+        rmlist="$rmlist $p1"
+   done
+   eval out=\$outfile$n
+   $X "$gmerge $out $gmerge_pipes &"
+done
+
+# $ncpu copies of wgrib2
+
+for i in `seq 1 $ncpu` ; do
+   tmp=`echo $newarg | sed "s=_pipe=$prefix.pipe.$i=g" `
+   $X "$wgrib2 -for_n $i::$ncpu $tmp &"
+done
+$X "wait"
+[ "$rmlist" != "" ] && $X "rm $rmlist"

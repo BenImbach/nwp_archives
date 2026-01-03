@@ -1,8 +1,6 @@
-# Ignore all directories except archive2smet
-maintenance/cedar/
-maintenance/dems/
-maintenance/read/
-maintenance/wgrib/
+# Ignore Simon's test scripts and data
+maintenance/tests/
+*.grib2
 
 # IDE
 .vscode/
