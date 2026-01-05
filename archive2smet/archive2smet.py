@@ -126,21 +126,18 @@ def _find_nearest_grid_points(grid_lons, grid_lats, query_lons, query_lats):
 
 
 def _preserve_coordinates(var_data, var_dims, new_dims, n_points):
-    """Preserve relevant coordinates when reshaping DataArray.
+    """Preserve only essential coordinates when reshaping DataArray.
     
-    Keeps non-spatial dimension coordinates and associated coordinates
-    (like valid_time for step dimension).
+    Keeps non-spatial dimension coordinates and valid_time (most important).
     """
     # Keep coordinates for non-spatial dimensions
     new_coords = {dim: var_data.coords[dim] for dim in var_dims if dim not in ['y', 'x']}
     
-    # Preserve associated coordinates (e.g., valid_time for step)
-    spatial_coords = ['y', 'x', 'latitude', 'longitude']
-    for coord_name in var_data.coords:
-        if coord_name not in var_dims and coord_name not in spatial_coords:
-            coord_dims = var_data.coords[coord_name].dims
-            if all(dim in new_dims for dim in coord_dims):
-                new_coords[coord_name] = var_data.coords[coord_name]
+    # Only preserve valid_time if it exists (essential for timestamp extraction)
+    if 'valid_time' in var_data.coords:
+        coord_dims = var_data.coords['valid_time'].dims
+        if all(dim in new_dims for dim in coord_dims):
+            new_coords['valid_time'] = var_data.coords['valid_time']
     
     new_coords['points'] = np.arange(n_points)
     return new_coords
@@ -159,25 +156,34 @@ def _extract_at_points(ds, var, lons, lats, lon_coord, lat_coord, is_2d):
         y_indices = flat_indices // x_size
         x_indices = flat_indices % x_size
         
-        # Extract data point by point
+        # Extract data using vectorized indexing (MUCH faster than loop)
         var_data = ds[var]
         var_dims = list(var_data.dims)
-        y_pos, x_pos = var_dims.index('y'), var_dims.index('x')
         data_array = var_data.values
         
-        point_data_list = []
-        for i, (y_idx, x_idx) in enumerate(zip(y_indices, x_indices)):
-            idx = [slice(None) if dim not in ['y', 'x'] else (y_idx if dim == 'y' else x_idx)
-                   for dim in var_dims]
-            point_data = data_array[tuple(idx)]
-            
-            if i == 0 and np.all(np.isnan(point_data)):
-                print(f"  Warning: Point {i} at ({lons[i]:.3f}, {lats[i]:.3f}) -> grid ({y_idx}, {x_idx}) returned all NaN")
-            
-            point_data_list.append(point_data)
+        # Build index arrays for all points at once
+        index_list = []
+        for dim in var_dims:
+            if dim == 'y':
+                index_list.append(y_indices)
+            elif dim == 'x':
+                index_list.append(x_indices)
+            else:
+                index_list.append(slice(None))
         
-        # Stack and reconstruct DataArray with preserved coordinates
-        values = np.stack(point_data_list, axis=-1)
+        # Extract all points at once using advanced indexing
+        values = data_array[tuple(index_list)]
+        
+        # Debug first point if all NaN
+        if len(lons) > 0:
+            first_point_data = values[..., 0] if values.ndim > 1 else values[0]
+            if np.all(np.isnan(first_point_data)):
+                print(f"  Warning: Point 0 at ({lons[0]:.3f}, {lats[0]:.3f}) -> grid ({y_indices[0]}, {x_indices[0]}) returned all NaN")
+        
+        # Transpose to get (non_spatial_dims, points) format
+        if values.ndim > 1:
+            # Move first dimension (points) to last position
+            values = np.moveaxis(values, 0, -1)
         new_dims = [d if d not in ['y', 'x'] else 'points' for d in var_dims]
         new_dims = [d for i, d in enumerate(new_dims) if d != 'points' or i == new_dims.index('points')]
         new_coords = _preserve_coordinates(var_data, var_dims, new_dims, len(lons))
@@ -190,11 +196,10 @@ def _extract_at_points(ds, var, lons, lats, lon_coord, lat_coord, is_2d):
 
 
 def _open_grib_datasets(grib_file, temp_dir):
-    """Open GRIB file, trying different methods"""
+    """Open GRIB file, trying different methods (optimized order)"""
     index_path = os.path.join(temp_dir, Path(grib_file).name + '.idx')
     
-    # First try cfgrib.open_datasets() which handles files with conflicting coordinates
-    # This is the recommended approach for files with variables having different step ranges
+    # First try cfgrib.open_datasets() - handles step conflicts (most common case)
     try:
         datasets = cfgrib.open_datasets(grib_file, backend_kwargs={'indexpath': index_path})
         if datasets:
@@ -202,17 +207,16 @@ def _open_grib_datasets(grib_file, temp_dir):
     except Exception:
         pass
     
-    # Fallback: try opening directly (works for files with consistent step ranges)
+    # Fallback: direct open (faster for files without conflicts)
     try:
         ds = xr.open_dataset(grib_file, engine='cfgrib', 
                              backend_kwargs={'indexpath': index_path})
-        # Check if we got any data variables (if empty, might have step conflicts)
         if len(ds.data_vars) > 0:
             return [ds]
     except Exception:
         pass
     
-    # Last resort: try with level filters
+    # Last resort: level filters (only if above methods fail)
     datasets = []
     for level in ['surface', 'heightAboveGround', 'atmosphere']:
         try:
