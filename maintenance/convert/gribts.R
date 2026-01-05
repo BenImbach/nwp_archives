@@ -35,12 +35,12 @@ base_paths <- list(
         fn = "/mnt/g/My Drive/snowmodels/ops/nwp_archives/gribts_functions.R"
     ),
     hpc = list(
-        wd = "/scratch/shorton/nwp_archives",
+        wd = "/scratch/shorton/nwp_archives/maintenance/convert",
         wgrib = "/home/shorton/sarpnwptools/wgrib2025/wgrib2/wgrib2",
-        grib = paste0("/home/shorton/project/data/pre2025/grib/hrdps", ifelse(season < 2018, "_west", ""), "/", season),
-        out = "/scratch/shorton/nwp_archives/out",
-        logs = "/scratch/shorton/nwp_archives/logs",
-        fn = "/scratch/shorton/nwp_archives/grib.R"
+        grib = paste0("/scratch/shorton/", season),
+        out = "/scratch/shorton/out",
+        logs = "/scratch/shorton/logs",
+        fn = "/scratch/shorton/nwp_archives/maintenance/convert/grib.R"
     )
 )
 

@@ -1,6 +1,19 @@
 #!/usr/bin/env python3
 """
-Core functions for archive2smet pipeline
+Archive2SMET Pipeline
+
+Extracts meteorological data from HRDPS GRIB2 files at station locations
+and generates SMET format time series files for SNOWPACK.
+
+Main workflow:
+1. Load stations from GeoJSON
+2. Extract elevations from DEM
+3. Extract meteorological data from GRIB files (parallel processing)
+4. Combine and write SMET files
+
+Usage:
+    python archive2smet.py --season 2023 --geojson stations.geojson \\
+                            --grib-dir /path/to/grib --output-dir /path/to/output
 """
 
 import os
@@ -8,6 +21,7 @@ import sys
 import numpy as np
 import pandas as pd
 import xarray as xr
+import cfgrib
 from pathlib import Path
 from datetime import datetime, timedelta
 from scipy.spatial import cKDTree
@@ -83,43 +97,135 @@ def _get_coords_info(ds):
     return lon_coord, lat_coord, is_2d
 
 
+def _normalize_longitude(lons):
+    """Normalize longitudes to 0-360 convention"""
+    lons = np.array(lons).copy()
+    lons[lons < 0] += 360
+    return lons
+
+
+def _find_nearest_grid_points(grid_lons, grid_lats, query_lons, query_lats):
+    """Find nearest grid points for query locations using cKDTree.
+    
+    Returns:
+        flat_indices: Flattened indices into grid arrays
+        distances: Distances in degrees
+    """
+    grid_coords = np.column_stack([_normalize_longitude(grid_lons), grid_lats])
+    query_points = np.column_stack([_normalize_longitude(query_lons), query_lats])
+    if query_points.ndim == 1:
+        query_points = query_points.reshape(1, -1)
+    
+    distances, flat_indices = cKDTree(grid_coords).query(query_points)
+    flat_indices = np.atleast_1d(flat_indices).astype(int)
+    
+    if np.any(distances > 1.0):
+        print(f"  Warning: Some points are far from grid (max distance: {distances.max():.3f} degrees)")
+    
+    return flat_indices, distances
+
+
+def _preserve_coordinates(var_data, var_dims, new_dims, n_points):
+    """Preserve relevant coordinates when reshaping DataArray.
+    
+    Keeps non-spatial dimension coordinates and associated coordinates
+    (like valid_time for step dimension).
+    """
+    # Keep coordinates for non-spatial dimensions
+    new_coords = {dim: var_data.coords[dim] for dim in var_dims if dim not in ['y', 'x']}
+    
+    # Preserve associated coordinates (e.g., valid_time for step)
+    spatial_coords = ['y', 'x', 'latitude', 'longitude']
+    for coord_name in var_data.coords:
+        if coord_name not in var_dims and coord_name not in spatial_coords:
+            coord_dims = var_data.coords[coord_name].dims
+            if all(dim in new_dims for dim in coord_dims):
+                new_coords[coord_name] = var_data.coords[coord_name]
+    
+    new_coords['points'] = np.arange(n_points)
+    return new_coords
+
+
 def _extract_at_points(ds, var, lons, lats, lon_coord, lat_coord, is_2d):
     """Extract variable data at point locations"""
     if is_2d:
-        grid_coords = np.column_stack([ds.coords[lon_coord].values.flatten(),
-                                      ds.coords[lat_coord].values.flatten()])
-        _, indices = cKDTree(grid_coords).query(np.column_stack([lons, lats]))
+        # Find nearest grid points
+        grid_lons = ds.coords[lon_coord].values.flatten()
+        grid_lats = ds.coords[lat_coord].values.flatten()
+        flat_indices, distances = _find_nearest_grid_points(grid_lons, grid_lats, lons, lats)
+        
+        # Convert to (y, x) indices
         y_size, x_size = ds.coords[lon_coord].shape
-        return ds[var].isel(y=xr.DataArray(indices // x_size, dims='points'),
-                           x=xr.DataArray(indices % x_size, dims='points'))
+        y_indices = flat_indices // x_size
+        x_indices = flat_indices % x_size
+        
+        # Extract data point by point
+        var_data = ds[var]
+        var_dims = list(var_data.dims)
+        y_pos, x_pos = var_dims.index('y'), var_dims.index('x')
+        data_array = var_data.values
+        
+        point_data_list = []
+        for i, (y_idx, x_idx) in enumerate(zip(y_indices, x_indices)):
+            idx = [slice(None) if dim not in ['y', 'x'] else (y_idx if dim == 'y' else x_idx)
+                   for dim in var_dims]
+            point_data = data_array[tuple(idx)]
+            
+            if i == 0 and np.all(np.isnan(point_data)):
+                print(f"  Warning: Point {i} at ({lons[i]:.3f}, {lats[i]:.3f}) -> grid ({y_idx}, {x_idx}) returned all NaN")
+            
+            point_data_list.append(point_data)
+        
+        # Stack and reconstruct DataArray with preserved coordinates
+        values = np.stack(point_data_list, axis=-1)
+        new_dims = [d if d not in ['y', 'x'] else 'points' for d in var_dims]
+        new_dims = [d for i, d in enumerate(new_dims) if d != 'points' or i == new_dims.index('points')]
+        new_coords = _preserve_coordinates(var_data, var_dims, new_dims, len(lons))
+        
+        return xr.DataArray(values, dims=new_dims, coords=new_coords, attrs=var_data.attrs)
     else:
+        # For 1D coordinates, use xarray's built-in selection
         return ds[var].sel({lon_coord: xr.DataArray(lons, dims='points'),
                            lat_coord: xr.DataArray(lats, dims='points')}, method='nearest')
 
 
 def _open_grib_datasets(grib_file, temp_dir):
     """Open GRIB file, trying different methods"""
-    datasets = []
     index_path = os.path.join(temp_dir, Path(grib_file).name + '.idx')
     
-    # Try opening directly
+    # First try cfgrib.open_datasets() which handles files with conflicting coordinates
+    # This is the recommended approach for files with variables having different step ranges
     try:
-        return [xr.open_dataset(grib_file, engine='cfgrib', 
-                                backend_kwargs={'indexpath': index_path})]
-    except:
+        datasets = cfgrib.open_datasets(grib_file, backend_kwargs={'indexpath': index_path})
+        if datasets:
+            return datasets
+    except Exception:
         pass
     
-    # Try with level filters
+    # Fallback: try opening directly (works for files with consistent step ranges)
+    try:
+        ds = xr.open_dataset(grib_file, engine='cfgrib', 
+                             backend_kwargs={'indexpath': index_path})
+        # Check if we got any data variables (if empty, might have step conflicts)
+        if len(ds.data_vars) > 0:
+            return [ds]
+    except Exception:
+        pass
+    
+    # Last resort: try with level filters
+    datasets = []
     for level in ['surface', 'heightAboveGround', 'atmosphere']:
         try:
             level_path = os.path.join(temp_dir, f"{Path(grib_file).stem}.{level}.idx")
-            datasets.append(xr.open_dataset(grib_file, engine='cfgrib',
-                                           backend_kwargs={'filter_by_keys': {'typeOfLevel': level},
-                                                          'indexpath': level_path}))
-        except:
+            ds = xr.open_dataset(grib_file, engine='cfgrib',
+                                backend_kwargs={'filter_by_keys': {'typeOfLevel': level},
+                                               'indexpath': level_path})
+            if len(ds.data_vars) > 0:
+                datasets.append(ds)
+        except Exception:
             pass
     
-    return datasets
+    return datasets if datasets else []
 
 
 # ============================================================================
@@ -157,23 +263,121 @@ def extract_station_elevations(dem_file, stations):
 # GRIB Extraction
 # ============================================================================
 
+def _extract_timestamp(df, var_data, ds):
+    """Extract timestamp from extracted variable data.
+    
+    Handles different GRIB time coordinate conventions:
+    - valid_time coordinate (preferred)
+    - time dimension
+    - step dimension with base time
+    """
+    # Prefer valid_time coordinate (most common in HRDPS files)
+    if 'valid_time' in var_data.coords:
+        if 'step' in df.columns:
+            # Map step values to valid_time
+            step_to_time = pd.Series(
+                pd.to_datetime(var_data.coords['valid_time'].values),
+                index=var_data.coords['step'].values
+            )
+            return df['step'].map(step_to_time)
+        elif 'valid_time' in df.columns:
+            return pd.to_datetime(df['valid_time'])
+        else:
+            return pd.to_datetime(var_data.coords['valid_time'].values)
+    
+    # Fallback to time dimension
+    if 'time' in df.columns:
+        return pd.to_datetime(df['time'])
+    
+    # Fallback to step + base time
+    if 'step' in df.columns:
+        if 'time' in ds.coords:
+            return pd.to_datetime(ds.coords['time'].values) + pd.to_timedelta(df['step'])
+        raise ValueError("Cannot determine timestamp: have 'step' but no 'time' coordinate")
+    
+    raise ValueError(f"Cannot determine timestamp. Columns: {df.columns.tolist()}, coords: {list(var_data.coords.keys())}")
+
+
+def _extract_variable_data(ds, var, lons, lats, point_ids, lon_coord, lat_coord, is_2d):
+    """Extract data for a single variable and return as long-format DataFrame.
+    
+    Returns DataFrame with columns: ID, timestamp, variable, value
+    """
+    var_data = _extract_at_points(ds, var, lons, lats, lon_coord, lat_coord, is_2d)
+    df = var_data.to_dataframe(name='value').reset_index()
+    
+    # Extract timestamp
+    df['timestamp'] = _extract_timestamp(df, var_data, ds)
+    
+    # Map GRIB variable name to SMET variable name
+    df['variable'] = VARIABLE_MAPPING[var]
+    
+    # Assign station IDs based on points dimension
+    if 'points' in df.columns:
+        df['ID'] = df['points'].map(lambda idx: point_ids[idx])
+    else:
+        # If no points dimension, tile station IDs
+        n_timesteps = len(df) // len(point_ids)
+        df['ID'] = np.tile(point_ids, n_timesteps)[:len(df)]
+    
+    return df[['ID', 'timestamp', 'variable', 'value']]
+
+
+def _process_wind_components(df_long):
+    """Convert u/v wind components to speed and direction.
+    
+    If u10/v10 components exist, calculates:
+    - VW: wind speed (m/s)
+    - DW: wind direction (degrees, 0-360, 0=North)
+    """
+    has_u = 'VW_U' in df_long['variable'].values
+    has_v = 'VW_V' in df_long['variable'].values
+    if not (has_u and has_v):
+        return df_long
+    
+    # Pivot to get u and v in same rows
+    wind_df = df_long[df_long['variable'].isin(['VW_U', 'VW_V'])].pivot_table(
+        index=['ID', 'timestamp'], columns='variable', values='value', aggfunc='first'
+    ).reset_index()
+    
+    # Calculate speed and direction
+    wind_df['VW'] = np.sqrt(wind_df['VW_U']**2 + wind_df['VW_V']**2)
+    # Direction: 270 - atan2(v, u) converts from meteorological to compass convention
+    wind_df['DW'] = (270 - np.arctan2(wind_df['VW_V'], wind_df['VW_U']) * 180 / np.pi) % 360
+    
+    # Convert back to long format
+    wind_long = wind_df[['ID', 'timestamp', 'VW', 'DW']].melt(
+        id_vars=['ID', 'timestamp'], var_name='variable', value_name='value'
+    )
+    
+    # Replace u/v components with speed/direction
+    return pd.concat([df_long[~df_long['variable'].isin(['VW_U', 'VW_V'])], wind_long], ignore_index=True)
+
+
 def extract_grib_file(grib_file, stations, point_id_col="station_id"):
-    """Extract GRIB data at station locations"""
+    """Extract GRIB data at station locations and return as wide-format DataFrame.
+    
+    Args:
+        grib_file: Path to GRIB2 file
+        stations: GeoDataFrame with station locations
+        point_id_col: Column name for station IDs
+    
+    Returns:
+        DataFrame with columns: ID, timestamp, and all SMET variables
+    """
     print(f"Extracting {len(stations)} points from {grib_file}")
     start_time = datetime.now()
     
     temp_dir = tempfile.mkdtemp()
     try:
-        # Open GRIB datasets
         datasets = _open_grib_datasets(grib_file, temp_dir)
         if not datasets:
             raise ValueError(f"Could not open {grib_file}")
         
-        # Extract coordinates
         lons, lats = stations.geometry.x.values, stations.geometry.y.values
         point_ids = stations[point_id_col].values
         
-        # Extract data from all datasets
+        # Extract all variables from all datasets
         all_data = []
         for ds in datasets:
             available_vars = [v for v in ds.data_vars if v in VARIABLE_MAPPING]
@@ -181,48 +385,33 @@ def extract_grib_file(grib_file, stations, point_id_col="station_id"):
                 continue
             
             lon_coord, lat_coord, is_2d = _get_coords_info(ds)
-            time_coord = 'valid_time' if 'valid_time' in ds.coords else 'time'
             
             for var in available_vars:
                 try:
-                    var_data = _extract_at_points(ds, var, lons, lats, lon_coord, lat_coord, is_2d)
-                    df = var_data.to_dataframe(name='value').reset_index()
-                    df['variable'] = VARIABLE_MAPPING[var]
-                    if 'points' in df.columns:
-                        df['ID'] = df['points'].map(lambda idx: point_ids[idx])
-                    else:
-                        n_timesteps = len(df) // len(point_ids)
-                        df['ID'] = np.tile(point_ids, n_timesteps)[:len(df)]
-                    df['timestamp'] = pd.to_datetime(df[time_coord])
-                    all_data.append(df[['ID', 'timestamp', 'variable', 'value']])
+                    df = _extract_variable_data(ds, var, lons, lats, point_ids, lon_coord, lat_coord, is_2d)
+                    all_data.append(df)
                 except Exception as e:
                     print(f"  Warning: Could not extract {var}: {e}")
         
         if not all_data:
             raise ValueError(f"No data extracted from {grib_file}")
         
-        # Combine and reshape
+        # Combine all variables into long format
         df_long = pd.concat(all_data, ignore_index=True)
         
-        # Handle wind components (u10, v10 -> VW, DW)
-        if 'VW_U' in df_long['variable'].values and 'VW_V' in df_long['variable'].values:
-            wind_df = df_long[df_long['variable'].isin(['VW_U', 'VW_V'])].pivot_table(
-                index=['ID', 'timestamp'], columns='variable', values='value', aggfunc='first').reset_index()
-            wind_df['VW'] = np.sqrt(wind_df['VW_U']**2 + wind_df['VW_V']**2)
-            wind_df['DW'] = (270 - np.arctan2(wind_df['VW_V'], wind_df['VW_U']) * 180 / np.pi) % 360
-            wind_long = wind_df[['ID', 'timestamp', 'VW', 'DW']].melt(
-                id_vars=['ID', 'timestamp'], var_name='variable', value_name='value')
-            df_long = pd.concat([df_long[~df_long['variable'].isin(['VW_U', 'VW_V'])], wind_long], ignore_index=True)
+        # Process wind components (u/v -> speed/direction)
+        df_long = _process_wind_components(df_long)
         
-        # Reshape to wide format
-        df_wide = df_long.pivot_table(index=['ID', 'timestamp'], columns='variable', values='value', 
-                                     aggfunc='first').reset_index()
+        # Reshape to wide format (one row per station-timestamp)
+        df_wide = df_long.pivot_table(
+            index=['ID', 'timestamp'], columns='variable', values='value', aggfunc='first'
+        ).reset_index()
         
-        # Convert temperature from Kelvin if needed
+        # Convert temperature from Kelvin to Celsius if needed
         if 'TA' in df_wide.columns and df_wide['TA'].mean() > TEMP_KELVIN_THRESHOLD:
             df_wide['TA'] = df_wide['TA'] - KELVIN_TO_CELSIUS
         
-        # Ensure all required columns
+        # Ensure all required SMET columns exist
         required_cols = ['ID', 'timestamp'] + REQUIRED_SMET_COLS
         df_wide = df_wide.reindex(columns=required_cols, fill_value=np.nan)
         
@@ -295,7 +484,21 @@ def _process_single_day(args):
 
 
 def process_season(season, geojson_file, grib_dir, output_dir, n_procs=None):
-    """Process entire season: extract all GRIB files and write final SMET files directly"""
+    """Process entire season: extract all GRIB files and write final SMET files.
+    
+    Args:
+        season: Season year (e.g., 2023)
+        geojson_file: Path to GeoJSON file with station locations
+        grib_dir: Directory containing HRDPS GRIB files
+        output_dir: Output directory for SMET files
+        n_procs: Number of parallel processes (default: auto-detect)
+    
+    Workflow:
+        1. Load stations and extract elevations
+        2. Process all GRIB files in parallel
+        3. Combine data and create complete hourly time series
+        4. Write SMET files (one per station)
+    """
     import geopandas as gpd
     
     start_time = datetime.now()
@@ -332,7 +535,7 @@ def process_season(season, geojson_file, grib_dir, output_dir, n_procs=None):
     with Pool(processes=n_procs) as pool:
         args_list = [(grib_file, stations) for grib_file in grib_files]
         results = pool.map(_process_single_day, args_list)
-    
+        
     all_data = [r for r in results if r is not None]
     
     if not all_data:

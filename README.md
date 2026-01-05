@@ -17,8 +17,8 @@ The topographies are defined in the following files:
 |------|-------|-----------|------------|
 | `HRDPS_WEST_DEM.grib2` | 2013 - 2017 | 485 x 685 | polar stereographic |
 | `HRDPS_OLD_DEM.grib2` | 2017 - 2023 | 1456 x 2576 | polar stereographic |
-| `RDPS_OLD_DEM.grib2` | 2020 - 2024 | 824 x 935 | polar stereographic |
 | `HRDPS_DEM.grib2` | 2023 - current | 1290 x 2540 | rotated latlon |
+| `RDPS_OLD_DEM.grib2` | 2020 - 2024 | 824 x 935 | polar stereographic |
 | `RDPS_DEM.grib2` | 2025 - current | 1076 x 1102 | rotated latlon |
 | `GDPS_DEM.grib2` | 2020 - 2022 | 751 x 1500 | latlon |
 
