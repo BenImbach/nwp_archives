@@ -80,8 +80,10 @@ def log_message(message, level="INFO"):
     log_entry = f"{timestamp} | {level} | {message}"
     if level == "ERROR":
         print(log_entry, file=sys.stderr)
+        sys.stderr.flush()
     else:
         print(log_entry)
+        sys.stdout.flush()
 
 
 # ============================================================================
@@ -233,7 +235,7 @@ def _open_grib_datasets(grib_file, temp_dir):
 
 def extract_station_elevations(dem_file, stations):
     """Extract elevation from DEM at station locations"""
-    print(f"Extracting elevations from {dem_file} for {len(stations)} stations")
+    print(f"Extracting elevations from {dem_file} for {len(stations)} stations", flush=True)
     
     # Open DEM
     try:
@@ -254,7 +256,7 @@ def extract_station_elevations(dem_file, stations):
     # Extract elevations
     elev_data = _extract_at_points(ds, elev_var, lons, lats, lon_coord, lat_coord, is_2d)
     elevations = elev_data.values
-    print(f"  Extracted elevations: {min(elevations):.1f} - {max(elevations):.1f} m")
+    print(f"  Extracted elevations: {min(elevations):.1f} - {max(elevations):.1f} m", flush=True)
     return {sid: float(elev) for sid, elev in zip(station_ids, elevations)}
 
 
@@ -364,7 +366,7 @@ def extract_grib_file(grib_file, stations, point_id_col="station_id"):
     Returns:
         DataFrame with columns: ID, timestamp, and all SMET variables
     """
-    print(f"Extracting {len(stations)} points from {grib_file}")
+    print(f"Extracting {len(stations)} points from {grib_file}", flush=True)
     start_time = datetime.now()
     
     temp_dir = tempfile.mkdtemp()
@@ -414,7 +416,7 @@ def extract_grib_file(grib_file, stations, point_id_col="station_id"):
         required_cols = ['ID', 'timestamp'] + REQUIRED_SMET_COLS
         df_wide = df_wide.reindex(columns=required_cols, fill_value=np.nan)
         
-        print(f"  Done in {(datetime.now() - start_time).total_seconds():.1f} seconds")
+        print(f"  Done in {(datetime.now() - start_time).total_seconds():.1f} seconds", flush=True)
         return df_wide[required_cols]
         
     finally:
@@ -533,9 +535,17 @@ def process_season(season, geojson_file, grib_dir, output_dir, n_procs=None):
     
     with Pool(processes=n_procs) as pool:
         args_list = [(grib_file, stations) for grib_file in grib_files]
-        results = pool.map(_process_single_day, args_list)
+        # Use imap_unordered for progress tracking
+        results = []
+        completed = 0
+        for result in pool.imap_unordered(_process_single_day, args_list):
+            completed += 1
+            if completed % 10 == 0 or completed == len(grib_files):
+                log_message(f"Progress: {completed}/{len(grib_files)} files processed")
+            if result is not None:
+                results.append(result)
         
-    all_data = [r for r in results if r is not None]
+    all_data = results
     
     if not all_data:
         log_message("No data extracted", "ERROR")
