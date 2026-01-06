@@ -146,9 +146,9 @@ def _preserve_coordinates(var_data, var_dims, new_dims, n_points):
 
 
 def _extract_at_points(ds, var, lons, lats, lon_coord, lat_coord, is_2d):
-    """Extract variable data at point locations"""
+    """Extract variable data at point locations using xarray's efficient lazy indexing"""
     if is_2d:
-        # Find nearest grid points
+        # Find nearest grid points (with longitude normalization)
         grid_lons = ds.coords[lon_coord].values.flatten()
         grid_lats = ds.coords[lat_coord].values.flatten()
         flat_indices, distances = _find_nearest_grid_points(grid_lons, grid_lats, lons, lats)
@@ -158,34 +158,10 @@ def _extract_at_points(ds, var, lons, lats, lon_coord, lat_coord, is_2d):
         y_indices = flat_indices // x_size
         x_indices = flat_indices % x_size
         
-        # Extract data using vectorized indexing (MUCH faster than loop)
-        var_data = ds[var]
-        var_dims = list(var_data.dims)
-        data_array = var_data.values
-        
-        # Find positions of y and x dimensions
-        y_pos = var_dims.index('y')
-        x_pos = var_dims.index('x')
-        
-        # Reshape to separate spatial and non-spatial dimensions
-        # Flatten spatial dimensions: (..., y, x) -> (..., y*x)
-        n_spatial = data_array.shape[y_pos] * data_array.shape[x_pos]
-        non_spatial_shape = [data_array.shape[i] for i in range(len(var_dims)) if i not in [y_pos, x_pos]]
-        reshaped = data_array.reshape(*non_spatial_shape, n_spatial)
-        
-        # Use flat indices to extract all points at once
-        values = reshaped[..., flat_indices]
-        
-        # Debug first point if all NaN
-        if len(lons) > 0:
-            first_point_data = values[..., 0] if values.ndim > 1 else values[0]
-            if np.all(np.isnan(first_point_data)):
-                print(f"  Warning: Point 0 at ({lons[0]:.3f}, {lats[0]:.3f}) -> grid ({y_indices[0]}, {x_indices[0]}) returned all NaN")
-        new_dims = [d if d not in ['y', 'x'] else 'points' for d in var_dims]
-        new_dims = [d for i, d in enumerate(new_dims) if d != 'points' or i == new_dims.index('points')]
-        new_coords = _preserve_coordinates(var_data, var_dims, new_dims, len(lons))
-        
-        return xr.DataArray(values, dims=new_dims, coords=new_coords, attrs=var_data.attrs)
+        # Use xarray's isel for lazy indexing (only loads needed data, MUCH faster!)
+        # This is the key difference from the slow version that loaded entire arrays
+        return ds[var].isel(y=xr.DataArray(y_indices, dims='points'),
+                           x=xr.DataArray(x_indices, dims='points'))
     else:
         # For 1D coordinates, use xarray's built-in selection
         return ds[var].sel({lon_coord: xr.DataArray(lons, dims='points'),
@@ -193,18 +169,10 @@ def _extract_at_points(ds, var, lons, lats, lon_coord, lat_coord, is_2d):
 
 
 def _open_grib_datasets(grib_file, temp_dir):
-    """Open GRIB file, trying different methods (optimized order)"""
+    """Open GRIB file, trying different methods"""
     index_path = os.path.join(temp_dir, Path(grib_file).name + '.idx')
     
-    # First try cfgrib.open_datasets() - handles step conflicts (most common case)
-    try:
-        datasets = cfgrib.open_datasets(grib_file, backend_kwargs={'indexpath': index_path})
-        if datasets:
-            return datasets
-    except Exception:
-        pass
-    
-    # Fallback: direct open (faster for files without conflicts)
+    # First try direct open (fastest for most files)
     try:
         ds = xr.open_dataset(grib_file, engine='cfgrib', 
                              backend_kwargs={'indexpath': index_path})
@@ -213,7 +181,15 @@ def _open_grib_datasets(grib_file, temp_dir):
     except Exception:
         pass
     
-    # Last resort: level filters (only if above methods fail)
+    # Fallback: try cfgrib.open_datasets() for files with step conflicts (2022 files)
+    try:
+        datasets = cfgrib.open_datasets(grib_file, backend_kwargs={'indexpath': index_path})
+        if datasets:
+            return datasets
+    except Exception:
+        pass
+    
+    # Last resort: level filters
     datasets = []
     for level in ['surface', 'heightAboveGround', 'atmosphere']:
         try:
