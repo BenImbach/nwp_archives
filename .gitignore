@@ -25,3 +25,4 @@ slurm-*.out
 
 # Google Docs (if synced)
 *.gdoc
+archive2smet/test.py

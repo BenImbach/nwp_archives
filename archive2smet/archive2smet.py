@@ -161,29 +161,24 @@ def _extract_at_points(ds, var, lons, lats, lon_coord, lat_coord, is_2d):
         var_dims = list(var_data.dims)
         data_array = var_data.values
         
-        # Build index arrays for all points at once
-        index_list = []
-        for dim in var_dims:
-            if dim == 'y':
-                index_list.append(y_indices)
-            elif dim == 'x':
-                index_list.append(x_indices)
-            else:
-                index_list.append(slice(None))
+        # Find positions of y and x dimensions
+        y_pos = var_dims.index('y')
+        x_pos = var_dims.index('x')
         
-        # Extract all points at once using advanced indexing
-        values = data_array[tuple(index_list)]
+        # Reshape to separate spatial and non-spatial dimensions
+        # Flatten spatial dimensions: (..., y, x) -> (..., y*x)
+        n_spatial = data_array.shape[y_pos] * data_array.shape[x_pos]
+        non_spatial_shape = [data_array.shape[i] for i in range(len(var_dims)) if i not in [y_pos, x_pos]]
+        reshaped = data_array.reshape(*non_spatial_shape, n_spatial)
+        
+        # Use flat indices to extract all points at once
+        values = reshaped[..., flat_indices]
         
         # Debug first point if all NaN
         if len(lons) > 0:
             first_point_data = values[..., 0] if values.ndim > 1 else values[0]
             if np.all(np.isnan(first_point_data)):
                 print(f"  Warning: Point 0 at ({lons[0]:.3f}, {lats[0]:.3f}) -> grid ({y_indices[0]}, {x_indices[0]}) returned all NaN")
-        
-        # Transpose to get (non_spatial_dims, points) format
-        if values.ndim > 1:
-            # Move first dimension (points) to last position
-            values = np.moveaxis(values, 0, -1)
         new_dims = [d if d not in ['y', 'x'] else 'points' for d in var_dims]
         new_dims = [d for i, d in enumerate(new_dims) if d != 'points' or i == new_dims.index('points')]
         new_coords = _preserve_coordinates(var_data, var_dims, new_dims, len(lons))
