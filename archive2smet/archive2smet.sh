@@ -2,12 +2,14 @@
 #SBATCH --account=def-<account>
 #SBATCH --job-name=archive2smet
 
-SEASON=${SEASON:-2023}
-GEOJSON_FILE=${GEOJSON_FILE:-/path/to/stations.geojson}
-GRIB_DIR=${GRIB_DIR:-/project/6005576/data/nwp/hrdps/${SEASON}}
+
+SEASON=${SEASON:-2021}
 
 REPO_DIR=$HOME/scratch/nwp_archives
 SCRIPT_DIR=${REPO_DIR}/archive2smet
+
+GEOJSON_FILE=${GEOJSON_FILE:-${SCRIPT_DIR}/stations1.geojson}
+GRIB_DIR=${GRIB_DIR:-$HOME/SFU_data/hrdps/${SEASON}}
 
 # Change to script directory to ensure relative paths work
 cd "${SCRIPT_DIR}" || {

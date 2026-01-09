@@ -26,7 +26,7 @@ fi
 REPO_DIR=$HOME/scratch/nwp_archives
 SCRIPT_DIR=${REPO_DIR}/archive2smet
 OUTPUT_DIR=${REPO_DIR}/output/${SEASON}
-GRIB_DIR=/project/6005576/data/nwp/hrdps/${SEASON}
+GRIB_DIR=$HOME/SFU_data/hrdps/${SEASON}
 
 # Extract basename of geojson file (without extension) for log naming
 STATIONS=$(basename "$GEOJSON_FILE" | sed 's/\.[^.]*$//')
