@@ -3,7 +3,7 @@
 #SBATCH --job-name=archive2smet
 
 
-SEASON=${SEASON:-2021}
+SEASON=${SEASON:-2022}
 
 REPO_DIR=$HOME/scratch/nwp_archives
 SCRIPT_DIR=${REPO_DIR}/archive2smet
