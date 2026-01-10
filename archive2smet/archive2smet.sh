@@ -8,7 +8,7 @@ SEASON=${SEASON:-2021}
 REPO_DIR=$HOME/scratch/nwp_archives
 SCRIPT_DIR=${REPO_DIR}/archive2smet
 
-GEOJSON_FILE=${GEOJSON_FILE:-${SCRIPT_DIR}/stations1.geojson}
+GEOJSON_FILE=${GEOJSON_FILE:-${SCRIPT_DIR}/stations.geojson}
 GRIB_DIR=${GRIB_DIR:-$HOME/SFU_data/hrdps/${SEASON}}
 
 # Change to script directory to ensure relative paths work
