@@ -47,7 +47,7 @@ echo "Submitting job..."
 JOB_OUTPUT=$(sbatch \
     --account=$ACCOUNT \
     --job-name=archive2smet \
-    --time=3:00:00 \
+    --time=1:00:00 \
     --mem=16G \
     --cpus-per-task=${CPUS} \
     --output=${REPO_DIR}/logs/${SEASON}/${SEASON}_${STATIONS}_%j.out \
